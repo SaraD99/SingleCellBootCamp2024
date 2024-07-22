@@ -8,8 +8,8 @@ options(Seurat.object.assay.version = 'v5')
 
 #####load and create Seurat object from 10x cellranger count output directory
 
-sample_1 <- Read10X("/Users/simone/Documents/GitHub/wishbone/SingleCellBootCamp2024/Day1/CodeAndData/DRY_Lab/Patient_01/raw_feature_bc_matrix/")
-sample_2 <- Read10X("/Users/simone/Documents/GitHub/wishbone/SingleCellBootCamp2024/Day1/CodeAndData/DRY_Lab/Patient_02/raw_feature_bc_matrix/")
+sample_1 <- Read10X("S:/SingleCellBootCamp2024-main/Day1/CodeAndData/DRY_Lab/Patient_01/raw_feature_bc_matrix")
+sample_2 <- Read10X("S:/SingleCellBootCamp2024-main/Day1/CodeAndData/DRY_Lab/Patient_02/raw_feature_bc_matrix")
 #sample_3 <- Read10X("corso_sc/Patient_03/raw_feature_bc_matrix/")
 
 #if you have a metadata table by cell barcode as row and feature as column can provide by meta.data option
@@ -17,13 +17,18 @@ sample_1 <- CreateSeuratObject(counts = sample_1)
 sample_2 <- CreateSeuratObject(counts = sample_2)
 #sample_3 <- CreateSeuratObject(counts = sample_3)
 
+#check the cell number
+ncol(sample_1)
 
-#####define Sample variable for each sample
+#####define Sample variable for each sample so represent the metadata
 sample_1$Sample <- "Patient_1"
 sample_2$Sample <- "Patient_2"
 
 #sample_3$Sample <- "Patient 3"
+sample_1$Condition <- "CTR"
+sample_2$Condition <- "Treatment"
 
+sample_1@meta.data
 
 #####in droplet based single-cell analysis we obtain many empty droplet. 
 ####To remove them we build a curve that shows the log-count of umi associated with each ranked barcode 
@@ -38,6 +43,11 @@ dev.off()
 ###We should zoom to appreciate the inversion of the curve
 
 seuratList<- lapply(seuratList,SubsetByBarcodeInflections)
+seuratList<- lapply(seuratList,function(x){CalculateBarcodeInflections(x,threshold.high = 10000,threshold.low = 1000)})
+BarcodeInflectionsPlot(seuratList[[1]])
+
+#now count how many cells remain available
+ncol(seuratList[1])
 
 
 ##compute Mt and ribo percent
@@ -90,6 +100,10 @@ for(i in 1:length(seuratList)){
   seuratList[[i]]<-seuratList[[i]][expressed_genes,]
 }
 
+#count how many good cells remain
+ncol(seuratList[[1]])
+ncol(seuratList[[2]])
+
 ### Version 4
 for(i in 1:length(seuratList)){
   counts<-GetAssayData(seuratList[[i]],slot = "counts")
@@ -104,6 +118,7 @@ for(i in 1:length(seuratList)){
 #####merge all filtered sample into one Seurat object  
 
 seuratObj <- merge(seuratList[[1]], c(seuratList[[2]]), add.cell.ids=c("sample_1","sample_2"))
+
 
 ##we can remove the 3 objects no longer needed from the environment
 
