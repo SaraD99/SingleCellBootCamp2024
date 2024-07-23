@@ -1,0 +1,211 @@
+---
+title: "Normalization and Integration"
+date: "2024-07-23"
+output: 
+  html_notebook:
+    toc: true
+    toc_float: true
+    theme: united
+    code_folding: hide
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, comment = "", fig.align = "center", fig.height = 5, fig.width = 7, warning = F)
+
+library(Seurat)
+library(SeuratData)
+library(ggplot2)
+```
+
+## Load data and the system show you how many samples you have
+```{r}
+InstallData("pbmcsca")
+obj <- LoadData("pbmcsca")
+obj
+```
+
+## Basic QC
+We now filter cells with more than 1000 features.
+```{r}
+obj <- subset(obj, nFeature_RNA > 1000)
+obj
+```
+
+The object contains data from nine different batches (stored in the Method column in the object metadata), representing seven different technologies.
+We can see them:
+```{r}
+table(obj$Method)
+```
+
+## Normalization
+The first step after the QC is normalization, to make gene expression comparable between cells. 
+
+As we have multiple batches, we have first to split the object RNA layer into them, and then perform the normalization.
+
+```{r}
+obj[["RNA"]] <- split(obj[["RNA"]], f = obj$Method)
+obj
+```
+
+We can now perform the normalization for each batch with just one line of code:
+```{r}
+obj <- NormalizeData(obj)
+obj
+```
+This normalization set a scale factor of 10,000 for each cell (so the sum of the counts of a cell is set to 10,000), and adjust the expression value of each gene accordingly. It then calculate the log1p of those values (natural logarithm of the value+1 to account for zeros).
+
+We can confirm that normalization has made the cells expression comparable:
+```{r}
+apply(obj[["RNA"]]$counts.10x_Chromium_v2[, 1:10], MARGIN = 2, FUN = function(x) {sum(x)})
+```
+
+
+```{r}
+apply(obj[["RNA"]]$data.10x_Chromium_v2[, 1:10], MARGIN = 2, FUN = function(x) {sum(exp(x) - 1)})
+```
+#the data are normilized and every funtion use the data of every samples
+
+## Dimensionality reduction
+In order to run the PCA, we have to perform two operations on the data:
+
+* Extrapolate variable features
+* Scale data for those features: when performing PCA, input data should be scaled so that each feature has the same "weight"
+
+# extract the data that cause noise
+# then the following step find the variable features for each sample and the common ones become the variable feature of all the others data and the system elaborate the top 10 vaiable features. In our case we have all PBC features
+
+```{r}
+obj <- FindVariableFeatures(obj)
+head(VariableFeatures(obj), 10)
+```
+
+```{r}
+obj <- ScaleData(obj)
+obj
+```
+# and scale the data only on the top 10 features and it create a common matrix maybe
+# the data in it came from the data layers of each samples
+
+### PCA
+```{r}
+obj <- RunPCA(obj)
+obj
+```
+# one important parameter are the number of npcs then the features parameter to run the PCA
+# then apper the slot with the result of PCA
+# looking at the objects we have a new value called PCA
+
+
+```{r}
+obj@reductions$pca@cell.embeddings[1:10, 1:5]
+obj@reductions$pca@stdev
+```
+
+```{r}
+DimPlot(obj, group.by = "Method")
+```
+#give input of seurat obj and the reduction object that i want to use and use groupby che colora in base methos they have been sequencing
+# we have 3 main group of cells but the color are mixed maybe something influence gene expression
+# we cannot clearly see the batch 
+
+
+```{r}
+ElbowPlot(obj, ndims = 50) +
+  scale_x_continuous(breaks = seq(0, 50, 5))
+```
+# here the elbo plot and we have to chioose the number of dimension looking at the elbow and to decide the value it is arbitrary between 16 and 25 it is fine as principal component
+
+### UMAP
+To better highlight differences in the sample, we can visualize the data with the UMAP.
+```{r}
+obj <- RunUMAP(obj, dims = 1:16, reduction = "pca", reduction.name = "umap.unintegrated")
+obj
+```
+# UMAP to preserve the genaral structure of the data 
+# we established the dimesion and the reduction we want to use and we set a new name for this reduction to not overwrite the same 
+
+We can now visualize it:
+```{r, fig.width=12, fig.height=6}
+DimPlot(obj, reduction = "umap.unintegrated", group.by = c("Method", "Experiment"))
+```
+# now we have two dimension UMAP1 nad UMAP2 and there are groups of cells based on the method and are clear the batch effect presence so the cells red are in the green ones so we have to do integration to have the same cells type of different samples
+
+
+We can see that they clusterize by Method. This data should be integrated, as in scRNA seq experiment the clusters should be celltypes.
+
+
+## Integration
+To perform the integration of the data, we will use the `IntegrateLayers` function within Seurat. There are different integration methods: CCA, RPCA, Harmony, FastMNN and scVI. We will show CCA and Harmony.
+# now we integrate the data to detect the batch effect and correct it
+
+### CCA
+```{r}
+obj <- IntegrateLayers(
+  object = obj, method = CCAIntegration,
+  orig.reduction = "pca", new.reduction = "integrated.cca",
+  verbose = FALSE
+)
+```
+# the function is always IntegrateLayers and here is fundamental have samples separated or splitted based on their batches or methods or experiments but having different methods we splitted samples based on methods then specifiy which reduction you want to integrate 
+# and it create a new reduction that we use as a new PCA that is similar to the PCA and it will be new PCA on which we calculate the neighborhood, the clasters and etc
+
+
+```{r}
+obj <- RunUMAP(obj, dims = 1:16, reduction = "integrated.cca", reduction.name = "umap.cca")
+obj
+```
+# we create a new redction to campare then it
+
+```{r fig.width=12, fig.height=6}
+DimPlot(obj, reduction = "umap.unintegrated", group.by = c("Method"))
+DimPlot(obj, reduction = "umap.cca", group.by = c("Method"))
+```
+# here the data are integrated and we have different cell types different one to another
+
+### Harmony
+```{r}
+obj <- IntegrateLayers(
+  object = obj, method = HarmonyIntegration,
+  orig.reduction = "pca", new.reduction = "integrated.harmony",
+  verbose = FALSE
+)
+```
+
+
+```{r}
+obj <- RunUMAP(obj, dims = 1:16, reduction = "integrated.harmony", reduction.name = "umap.harmony")
+obj
+```
+
+```{r}
+DimPlot(obj, reduction = "umap.harmony", group.by = c("Method"))
+```
+
+## Extra: SCTNormalization
+There is also another normalization method in Seurat, which is an upgraded version of NormalizeData: `SCTransform`. It will replace NormalizeData, FindVariableFeatures and ScaleData functions.
+It will introduce a new assay: SCT.
+
+```{r}
+obj <- SCTransform(obj, vst.flavor = "v2")
+obj
+```
+
+# instead of doing the normalization steps we have done perform this SCTNormalization and for this normalization the object has to be divided into SAMPLES not batche or other
+# this function give normalization and features and scala data arrivi direttamente allo step di PCA
+
+```{r}
+obj <- RunPCA(obj, assay = "SCT", reduction.name = "pca.sct")
+obj <- RunPCA(obj, dims = 1:16, reduction = "pca.sct", reduction.name = "umap.unitegrated.sct")
+obj
+```
+
+```{r}
+Dimplot(obj, reduction = "umap.unintegrated", group.by = c("Method"))
+Dimplot(obj, reduction = "umap.unintegrated.sct", group.by = c("Method"))
+```
+
+
+```{r}
+devtools::session_info()
+```
+
